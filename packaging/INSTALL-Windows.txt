@@ -1,0 +1,8 @@
+Quell - dynamic resonance suppressor (Windows 10/11, 64-bit)
+
+Install
+  VST3 : copy the whole Quell.vst3 folder to  C:\Program Files\Common Files\VST3\
+         then rescan plugins in your DAW.
+  App  : Quell-Standalone.exe runs without a DAW.
+
+No Visual C++ redistributable is needed (the runtime is built in).

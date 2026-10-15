@@ -1,0 +1,110 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ "v*" ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to attach zips to a GitHub release on version tags
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows-x64
+            os: windows-latest
+          - name: macOS-Universal
+            os: macos-15        # Apple Silicon runner
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable long paths (JUCE has very long file names)
+        if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
+
+      - name: Configure
+        shell: bash
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        shell: bash
+        run: cmake --build build --config Release --parallel 4
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: echo "version=$(grep -m1 -oE 'project\(Quell VERSION [0-9.]+' CMakeLists.txt | awk '{print $3}')" >> "$GITHUB_OUTPUT"
+
+      - name: Engine tests
+        shell: bash
+        run: |
+          exe=$(find build -type f \( -name QuellEngineTest -o -name QuellEngineTest.exe \) | head -1)
+          "$exe"
+
+      # ---------------- macOS ----------------
+      - name: Check universal binary, sign, validate AU
+        if: runner.os == 'macOS'
+        run: |
+          set -e
+          ART=build/Quell_artefacts/Release
+          lipo -archs "$ART/VST3/Quell.vst3/Contents/MacOS/Quell"
+          lipo -archs "$ART/VST3/Quell.vst3/Contents/MacOS/Quell" | grep -q arm64
+          lipo -archs "$ART/VST3/Quell.vst3/Contents/MacOS/Quell" | grep -q x86_64
+
+          # Ad-hoc signature (required to load on Apple Silicon). For distribution
+          # without Gatekeeper warnings, sign with a Developer ID and notarize instead.
+          for b in "$ART/VST3/Quell.vst3" "$ART/AU/Quell.component" "$ART/Standalone/Quell.app"; do
+            codesign --force --deep --sign - "$b"
+            codesign --verify --deep --strict "$b"
+          done
+
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R "$ART/AU/Quell.component" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          auval -v aufx Qul1 Qlau
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          ART=build/Quell_artefacts/Release
+          PKG="Quell-${{ steps.version.outputs.version }}-macOS-Universal"
+          mkdir -p "$PKG"
+          cp -R "$ART/VST3/Quell.vst3" "$ART/AU/Quell.component" "$ART/Standalone/Quell.app" "$PKG/"
+          cp packaging/INSTALL-macOS.txt "$PKG/INSTALL.txt"
+          ditto -c -k --keepParent "$PKG" "$PKG.zip"
+
+      # ---------------- Windows ----------------
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $art = "build/Quell_artefacts/Release"
+          $pkg = "Quell-${{ steps.version.outputs.version }}-Windows-x64"
+          New-Item -ItemType Directory -Force $pkg | Out-Null
+          Copy-Item -Recurse "$art/VST3/Quell.vst3" "$pkg/"
+          Copy-Item "$art/Standalone/Quell.exe" "$pkg/Quell-Standalone.exe"
+          Copy-Item packaging/INSTALL-Windows.txt "$pkg/INSTALL.txt"
+          Compress-Archive -Path $pkg -DestinationPath "$pkg.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Quell-${{ steps.version.outputs.version }}-${{ matrix.name }}
+          path: Quell-*.zip
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Both jobs may try to create it; whichever loses just uploads
+          gh release create "$GITHUB_REF_NAME" --title "Quell $GITHUB_REF_NAME" --notes-file CHANGELOG.md 2>/dev/null || true
+          gh release upload "$GITHUB_REF_NAME" Quell-*.zip --clobber

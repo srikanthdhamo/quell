@@ -1,0 +1,20 @@
+Quell - dynamic resonance suppressor (macOS, Apple Silicon + Intel)
+
+Install
+  VST3 : copy Quell.vst3      to  ~/Library/Audio/Plug-Ins/VST3/
+  AU   : copy Quell.component to  ~/Library/Audio/Plug-Ins/Components/   (Logic Pro, GarageBand)
+  App  : Quell.app runs without a DAW
+
+  (Use /Library/... instead of ~/Library/... to install for all users.)
+
+First launch / "cannot be opened" / plugin not showing up
+  This build is ad-hoc signed, not notarized by Apple, so macOS quarantines it
+  after download. Remove the quarantine flag once, in Terminal:
+
+    xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Quell.vst3
+    xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/Quell.component
+
+  Then restart your DAW (Logic: Settings > Plug-in Manager > Reset & Rescan).
+
+Native on M1/M2/M3/M4: the binaries are universal (arm64 + x86_64).
+Requires macOS 11 Big Sur or later.
